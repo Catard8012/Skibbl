@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Drawing Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Navbar at the top -->
+    <div class="navbar">
+        <div class="navbar-item round-info">
+            <div class="round-time">10</div>
+            <p id="round-text">Round 2 of 3</p>
+        </div>
+        <div class="navbar-item word-info">
+            <p class="guess-text">GUESS THIS</p>
+            <p class="underscores">_ _ _ _ _ _</p>
+        </div>
+        <div class="navbar-item settings-icon">
+            <img src="settings-icon.png" alt="Settings">
+        </div>
+    </div>
+
+    <!-- Main Game Wrapper -->
+    <div class="game-container">
+        <!-- Left Player List Panel -->
+        <div class="player-list-box">
+            <h3>Players</h3>
+            <div class="player-list">
+                <!-- Player items go here -->
+            </div>
+        </div>
+
+        <!-- Drawing Area Container -->
+        <div class="drawing-area-container">
+            <div class="drawing-area">
+                <canvas id="canvas" width="800" height="600"></canvas>
+            </div>
+            <div id="edit-options-bar">
+                <div id="color-selector">
+                    <!-- Color options go here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="chat-area">
+            <div class="chat-box">
+                <!-- Chat messages go here -->
+            </div>
+            <input type="text" id="chat-input" placeholder="Type your guess here...">
+        </div>
+    </div>
+
+    <!-- Optional Modals or Overlays -->
+    <div id="load" style="display: none;">Loading...</div>
+    <div id="modal" style="display: none;">Modal Content</div>
+
+    <!-- JS File -->
+    <script src="app.js"></script>
+</body>
+</html>

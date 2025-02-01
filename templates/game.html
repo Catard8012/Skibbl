@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scrib.io Clone - Game</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        sup {
+            vertical-align: super;
+            font-size: small;
+            margin-left: 5px;
+        }
+    </style>
+    <script>
+        // Utility functions for cookies (unchanged)
+        function setCookie(name, value, days) {
+            const date = new Date();
+            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+            document.cookie = `${name}=${value};expires=${date.toUTCString()};path=/`;
+        }
+
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+        }
+
+        function deleteCookie(name) {
+            document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+        }
+    </script>
+</head>
+<body>
+    <div id="game-wrapper">
+        <div class="navbar">
+            <div class="navbar-item round-info">
+                <div class="round-time" id="round-timer">30</div> <!-- Timer -->
+                <p id="round-text">Round 1</p>
+            </div>
+            <div class="navbar-item word-info">
+                <p class="guess-text" id="top-text">GUESS THIS</p> <!-- Change this dynamically based on drawer -->
+                <p class="underscores" id="word-underscores">
+                    <span id="underscores-text">_ _ _ _ _ _</span><sup id="word-length" style="display: none;"></sup>
+                </p>
+            </div>            
+            <div class="navbar-item settings-icon">
+                <img src="{{ url_for('static', filename='Images/gear-icon.png') }}" alt="Settings" id="settings-icon">
+            </div>
+        </div>
+
+        <div class="game-container">
+            <div class="player-list-box">
+                <h3>Players</h3>
+                <div class="player-list">
+                    <!-- Player List will be dynamically updated -->
+                </div>
+            </div>
+
+            <div class="drawing-area-container">
+                <div class="drawing-area">
+                    <canvas id="canvas" width="800" height="600"></canvas>
+                    <div id="waiting-box" class="hidden">
+                        <div class="waiting-message">
+                            Waiting for players...
+                        </div>
+                    </div>
+                </div>
+                <div id="edit-options-bar">
+                    <div id="color-selector">
+                        <!-- Colors for drawing -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-area">
+                <div class="chat-box">
+                    <!-- Chat messages will be dynamically updated -->
+                </div>
+                <input type="text" id="chat-input" placeholder="Type your guess here..." autofocus>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let currentWord = "";  // Store the current word for the round
+        let displayedWord = [];  // Store the displayed underscores for the word
+        let gameStarted = false; // Track if the game has started
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+        let currentColor = '#000000';  // Default drawing color
+        let canDraw = false;  // Only the drawer can draw
+        let drawer = ''; // Store the current drawer
+        let roundTimer = null;
+        let selectionTimer = null;
+        
+    
+        const scaleX = canvas.width / canvas.getBoundingClientRect().width;
+        const scaleY = canvas.height / canvas.getBoundingClientRect().height;
+    
+        const waitingBox = document.getElementById('waiting-box');
+    
+        // Retrieve or prompt for username
+        let username = getCookie("username");
+        if (!username) {
+            username = prompt("Enter your username:", "Player" + Math.floor(Math.random() * 1000));
+            setCookie("username", username, 7);
+        }
+    
+        // Join the game with the username
+        socket.emit('join_game', { username: username });
+    
+        // Function to update player list and handle drawing permission
+        function updatePlayerList(players, drawer) {
+            const playerListDiv = document.querySelector('.player-list');
+            playerListDiv.innerHTML = '';  // Clear the existing list
+            players.forEach(player => {
+                const playerItem = document.createElement('div');
+                playerItem.classList.add('player-item');
+                playerItem.textContent = player.name + (player.name === drawer ? ' (drawer)' : '');
+                playerListDiv.appendChild(playerItem);
+            });
+    
+            // If there is only one player, disable the game
+            if (players.length < 2) {
+                waitingBox.classList.remove('hidden');
+                waitingBox.classList.add('slide-down');  // Add slide-down animation
+                canDraw = false;  // Disable drawing
+                gameStarted = false;  // Mark game as not started
+                document.getElementById('underscores-text').textContent = '_ _ _ _ _ _';
+                document.getElementById('word-length').style.display = 'none';
+            } else {
+                waitingBox.classList.add('hidden');
+                waitingBox.classList.remove('slide-down');
+            }
+        }
+    
+        // Update the round timer and ensure all users see it
+        function updateTimer(seconds) {
+            document.getElementById('round-timer').textContent = seconds;
+        }
+    
+        function getMousePos(event) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: (event.clientX - rect.left) * scaleX,
+                y: (event.clientY - rect.top) * scaleY
+            };
+        }
+    
+        canvas.addEventListener('mousedown', (event) => {
+            if (!canDraw) return;  // Only the drawer can draw
+            drawing = true;
+            const { x, y } = getMousePos(event);
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            socket.emit('drawing', { x: x, y: y, type: 'start', color: currentColor });
+        });
+    
+        canvas.addEventListener('mousemove', (event) => {
+            if (!drawing || !canDraw) return;
+            const { x, y } = getMousePos(event);
+            ctx.strokeStyle = currentColor;
+            ctx.lineWidth = 3;
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            socket.emit('drawing', { x: x, y: y, type: 'draw', color: currentColor });
+        });
+    
+        canvas.addEventListener('mouseup', () => {
+            if (!canDraw) return;
+            drawing = false;
+            ctx.closePath();
+        });
+    
+        socket.on('drawing_data', function (data) {
+            ctx.strokeStyle = data.color;
+            ctx.lineWidth = 3;
+            if (data.type === 'start') {
+                ctx.beginPath();
+                ctx.moveTo(data.x, data.y);
+            } else if (data.type === 'draw') {
+                ctx.lineTo(data.x, data.y);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(data.x, data.y);
+            }
+        });
+    
+        socket.on('new_round', function(data) {
+            currentWord = data.word;  // Store the current word or underscores
+            displayedWord = Array(data.word_length).fill('_');  // Fill with underscores for guessers
+            
+            drawer = data.drawer;  // Set the current drawer
+            canDraw = username === drawer;  // Check if the current user is the drawer
+
+            // If the user is the drawer, show the word and allow drawing, else show underscores
+            if (canDraw) {
+                document.getElementById('underscores-text').textContent = currentWord;  // Drawer sees the word
+                document.getElementById('canvas').classList.add('canvas-cursor');  // Apply crosshair cursor for drawer
+            } else {
+                document.getElementById('underscores-text').textContent = displayedWord.join(' ');  // Guessers see underscores
+                document.getElementById('canvas').classList.remove('canvas-cursor');  // Remove crosshair for non-drawers
+            }
+
+            // Update the word length superscript
+            document.getElementById('word-length').textContent = data.word_length;  // Correct word length
+            document.getElementById('word-length').style.display = 'inline';
+
+            // Update the player list with the drawer
+            updatePlayerList(data.players, drawer);
+
+            // Update the top text to indicate whether the player is the drawer or a guesser
+            const topText = document.getElementById('top-text');
+            topText.textContent = canDraw ? 'DRAW THIS' : 'GUESS THIS';
+        });
+        
+        const chatInput = document.getElementById('chat-input');
+
+        // Handle the Enter key to send a chat message
+        chatInput.addEventListener('keypress', function (event) {
+            if (event.key === 'Enter') {
+                const message = chatInput.value.trim();
+                if (message) {
+                    socket.emit('chat_message', { username: username, message: message });
+                    chatInput.value = ''; // Clear the input field
+                }
+            }
+        });
+
+        socket.on('chat_message', function (data) {
+            const chatBox = document.querySelector('.chat-box');
+            const messageElement = document.createElement('p');
+            if (data.correct) {
+                // Highlight correct guesses
+                messageElement.innerHTML = `<strong>${data.username}:</strong> ${data.message} (Correct!)`;
+                messageElement.style.color = 'green';
+            } else {
+                messageElement.innerHTML = `<strong>${data.username}:</strong> ${data.message}`;
+            }
+
+            chatBox.appendChild(messageElement);
+            chatBox.scrollTop = chatBox.scrollHeight; // Scroll to the latest message
+        });
+        
+        // Listen for the reveal_word event to update underscores
+        socket.on('reveal_word', function (data) {
+            const correctWord = data.word;  // Get the correct word from the server
+            const underscoresElement = document.getElementById('underscores-text');
+            underscoresElement.textContent = correctWord;  // Replace underscores with the correct word
+        });
+
+        socket.on('round_ended', function() {
+            // Clear the canvas for the next drawer
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Disable drawing for the previous drawer
+            canDraw = false;
+
+            // Reset the UI for the next round
+            updateTimer(0);
+        });
+    
+        // Listen for player list updates
+        socket.on('update_players', function(players) {
+            updatePlayerList(players, drawer);
+        });
+    
+        socket.on('end_word_selection', function () {
+            console.log("Debug: End word selection triggered");
+
+            // Clear any running selection timers
+            if (selectionTimer) {
+                clearInterval(selectionTimer);
+                selectionTimer = null;
+                console.log("Debug: Selection timer cleared");
+            }
+
+            // Ensure the word selection box is removed for the drawer
+            const wordSelectionBox = document.getElementById('word-selection-box');
+            if (wordSelectionBox) {
+                wordSelectionBox.remove();
+                console.log("Debug: Word selection box removed");
+            }
+
+            // Ensure the waiting box is removed for guessers
+            const waitingBox = document.getElementById('waiting-box');
+            if (waitingBox) {
+                waitingBox.remove();
+                console.log("Debug: Waiting box removed");
+            }
+        });
+
+        socket.on('select_word', function (data) {
+            const drawer = data.drawer;
+            const wordOptions = data.wordOptions; // Array of three word options
+            const timerDuration = data.timer;
+
+            let timer = timerDuration;
+            updateTimer(timer);
+
+            // Start the selection timer
+            selectionTimer = setInterval(function () {
+                timer--;
+                updateTimer(timer);
+
+                if (timer <= 0) {
+                    clearInterval(selectionTimer);
+                    socket.emit('end_word_selection'); // Notify server that selection time is over
+                }
+            }, 1000);
+
+            // Drawer sees word selection options
+            if (username === drawer) {
+                const drawingArea = document.querySelector('.drawing-area');
+                const wordSelectionBox = document.createElement('div');
+                wordSelectionBox.id = 'word-selection-box';
+                wordSelectionBox.classList.add('slide-down');
+                wordSelectionBox.innerHTML = `
+                    <div class="waiting-message">
+                        <h3>Select a word</h3>
+                        <div class="word-options">
+                            ${wordOptions.map(word => `<div class="word-option">${word}</div>`).join('')}
+                        </div>
+                    </div>
+                `;
+                drawingArea.appendChild(wordSelectionBox);
+
+                // Handle word selection
+                document.querySelectorAll('.word-option').forEach(option => {
+                    option.addEventListener('click', function () {
+                        clearInterval(selectionTimer); // Stop the selection timer
+                        socket.emit('word_selected', { word: this.textContent });
+                        wordSelectionBox.remove(); // Hide the selection UI
+                    });
+                });
+            } else {
+                // Non-drawers see "waiting for {drawer} to select a word..."
+                const drawingArea = document.querySelector('.drawing-area');
+                const waitingBox = document.createElement('div');
+                waitingBox.id = 'waiting-box';
+                waitingBox.classList.add('slide-down');
+                waitingBox.innerHTML = `
+                    <div class="waiting-message">
+                        Waiting for ${drawer} to select a word...
+                    </div>
+                `;
+                drawingArea.appendChild(waitingBox);
+
+                // Remove the waiting box after the timer expires
+                setTimeout(() => {
+                    if (waitingBox) waitingBox.remove();
+                }, timerDuration * 1000);
+            }
+        });
+
+        socket.on('start_word_selection', function (data) {
+            const drawer = data.drawer;
+            const wordOptions = data.wordOptions; // Array of three word options
+            const timerDuration = data.timer;
+
+            // Clear any existing timers
+            if (roundTimer) {
+                clearInterval(roundTimer);
+                roundTimer = null;
+            }
+            if (selectionTimer) {
+                clearInterval(selectionTimer);
+                selectionTimer = null;
+            }
+
+            let timer = timerDuration;
+            updateTimer(timer);
+
+            // Start the selection timer
+            selectionTimer = setInterval(function () {
+                timer--;
+                updateTimer(timer);
+
+                if (timer <= 0) {
+                    clearInterval(selectionTimer);
+                    selectionTimer = null;
+                    socket.emit('end_word_selection'); // Notify server that selection time is over
+                }
+            }, 1000);
+
+            // Check if the word selection box already exists to avoid duplicates
+            const existingWordSelectionBox = document.getElementById('word-selection-box');
+            if (existingWordSelectionBox) {
+                console.log("Debug: Word selection box already exists, skipping creation.");
+                return;
+            }
+
+            if (username === drawer) {
+                const drawingArea = document.querySelector('.drawing-area');
+                const wordSelectionBox = document.createElement('div');
+                wordSelectionBox.id = 'word-selection-box';
+                wordSelectionBox.classList.add('slide-down');
+                wordSelectionBox.innerHTML = `
+                    <div class="waiting-message">
+                        <h3>Select a word</h3>
+                        <div class="word-options">
+                            ${wordOptions.map(word => `<div class="word-option">${word}</div>`).join('')}
+                        </div>
+                    </div>
+                `;
+                drawingArea.appendChild(wordSelectionBox);
+
+                // Handle word selection
+                document.querySelectorAll('.word-option').forEach(option => {
+                    option.addEventListener('click', function () {
+                        clearInterval(selectionTimer); // Stop the selection timer immediately
+                        selectionTimer = null;
+                        socket.emit('word_selected', { word: this.textContent });
+                        wordSelectionBox.remove(); // Hide the selection UI
+                    });
+                });
+            } else {
+                // Non-drawers see "waiting for {drawer} to select a word..."
+                const drawingArea = document.querySelector('.drawing-area');
+                const waitingBox = document.createElement('div');
+                waitingBox.id = 'waiting-box';
+                waitingBox.classList.add('slide-down');
+                waitingBox.innerHTML = `
+                    <div class="waiting-message">
+                        Waiting for ${drawer} to select a word...
+                    </div>
+                `;
+                drawingArea.appendChild(waitingBox);
+
+                // Remove the waiting box after the timer expires
+                setTimeout(() => {
+                    if (waitingBox) waitingBox.remove();
+                }, timerDuration * 1000);
+            }
+        });
+
+        socket.on('start_round_timer', function (data) {
+            let roundTime = data.timer;
+
+            // Clear any existing timers
+            if (roundTimer) {
+                clearInterval(roundTimer);
+                roundTimer = null;
+            }
+            if (selectionTimer) {
+                clearInterval(selectionTimer);
+                selectionTimer = null;
+            }
+
+            console.log("Debug: Starting round timer with duration:", roundTime);
+            updateTimer(roundTime); // Update the timer UI
+
+            roundTimer = setInterval(function () {
+                roundTime--;
+                console.log("Debug: Round timer countdown:", roundTime);
+
+                updateTimer(roundTime);
+
+                if (roundTime <= 0) {
+                    console.log("Debug: Round timer ended");
+                    clearInterval(roundTimer);
+                    roundTimer = null;
+                    socket.emit('end_round'); // Notify server to end the round
+                }
+            }, 1000);
+        });
+
+        socket.on('word_selected', function () {
+            console.log("Debug: word_selected event triggered");
+
+            // Debugging: Check if the timer exists before clearing
+            if (selectionTimer) {
+                console.log("Debug: Clearing selection timer");
+                clearInterval(selectionTimer); // Stop the selection timer immediately
+            } else {
+                console.log("Debug: No selection timer to clear");
+            }
+
+            // Hide the word selection box for all users
+            const wordSelectionBox = document.getElementById('word-selection-box');
+            if (wordSelectionBox) {
+                console.log("Debug: Removing word selection box");
+                wordSelectionBox.remove(); // Completely remove the selection UI
+            } else {
+                console.log("Debug: No word selection box found");
+            }
+
+            // Hide the waiting box for guessers
+            const waitingBox = document.getElementById('waiting-box');
+            if (waitingBox) {
+                console.log("Debug: Removing waiting box");
+                waitingBox.remove(); // Completely remove the waiting UI
+            } else {
+                console.log("Debug: No waiting box found");
+            }
+        });
+
+        socket.on('end_word_selection', function () {
+            clearInterval(selectionTimer); // Stop the selection timer
+
+            // Hide the word selection box for all users
+            const wordSelectionBox = document.getElementById('word-selection-box');
+            if (wordSelectionBox) {
+                wordSelectionBox.remove();
+            }
+
+            // Hide the waiting box for guessers
+            const waitingBox = document.getElementById('waiting-box');
+            if (waitingBox) {
+                waitingBox.remove();
+            }
+        });
+    
+        document.getElementById('chat-input').addEventListener('keyup', function (event) {
+            if (event.key === 'Enter') {
+                const message = event.target.value;
+                socket.emit('chat_message', message);
+                event.target.value = '';
+            }
+        });
+    </script>    
+</body>
+</html>
